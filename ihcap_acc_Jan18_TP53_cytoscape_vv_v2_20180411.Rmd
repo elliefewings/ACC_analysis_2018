@@ -1,0 +1,169 @@
+---
+title: "Look for genes with variants in multiple families"
+author: "EF"
+date: "04 Apr 2018"
+output: html_document
+---
+# start_section
+  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+graphics.off()
+
+# Set root working folder
+library(knitr)
+library(dplyr)
+library(stringr)
+library(kableExtra)
+
+opts_knit$set(root.dir = "/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IHCAP_sets/IHCAP_ACC_Jan18")
+setwd("/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IHCAP_sets/IHCAP_ACC_Jan18")
+
+```
+
+#Load image from s01
+```{r load image}
+
+load("R_data/s03_ihcap_acc_Jan18_oncocytic_v2_20180116.Rdata")
+
+rm(gt, vv, aggr, merged)
+
+gt <- gt.onco
+vv <- aggr_acc
+
+rm(gt.onco, aggr_acc)
+
+#Check dimensions
+dim(gt)
+dim(vv)
+
+sum(row.names(gt) != row.names(vv)) 
+
+```
+
+#Load TP53 interactions
+```{r interactions}
+#Load results of cytoscape for acc
+tp53 <- read.table("acc_jan18_PAV_tp53_v2_20180319.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
+
+#count occurences of degrees of interaction with tp53
+table(tp53[tp53$node.type == "query",]$degSepTP53)
+
+#Add degree of seperation to vv for gene names and synonyms
+tp.g <- tp53 %>% subset(select=c("gene.name", "degSepTP53"))
+colnames(tp.g) <- c("SYMBOL", "degSepTP53_1")
+
+tp.s <- tp53 %>% subset(select=c("Synonym", "degSepTP53"))
+colnames(tp.s) <- c("SYMBOL", "degSepTP53_2")
+
+#Merge on gene names and synonyms
+vv.m1 <- merge(vv, tp.g, all.x=TRUE, on="SYMBOL")
+vv.m2 <- merge(vv.m1, tp.s, all.x=TRUE, on="SYMBOL")
+
+#combine degrees of sep for both gene names and synonyms
+vv.m2$degSepTP53 <- as.numeric(paste(vv.m2$degSepTP53_1, vv.m2$degSepTP53_2, sep="") %>% str_replace_all("NA", ""))
+
+row.names(vv.m2) <- vv.m2$rows
+
+#reorder vv on rownames and remove two degint columns
+vv.m2 <- vv.m2[order(row.names(vv.m2)),] %>% subset(select=c(-degSepTP53_1, -degSepTP53_2, -rows))
+
+#Manually add degofint to gene name that cant be found (corresponds to GRK2 in cytoscape)
+vv.m2$degSepTP53[vv.m2$SYMBOL == "ADRBK1"] <- 2
+
+#Count of not interacting
+sum(is.na(vv.m2$degSepTP53))
+
+#Count of interacting
+sum(!is.na(vv.m2$degSepTP53))
+
+rm(tp.g, tp.s, vv.m1, vv)
+```
+
+#select tp53 interactors
+```{r tp53 interactors}
+#select variants in genes that interact and corresponding gt info
+vv.tp53 <- vv.m2[!is.na(vv.m2$degSepTP53),]
+gt.tp53 <- gt[row.names(gt) %in% row.names(vv.tp53),]
+
+sum(row.names(gt.tp53) != row.names(vv.tp53))
+
+#merge vv and gt
+all.tp53 <- cbind(vv.tp53, gt.tp53)
+
+#write.csv(all.tp53, "ihcap_acc_jan18_tp53_cyto_vv_20180406.csv")
+
+#clean up
+rm(vv.tp53, gt.tp53, vv.m2, all.tp53, acc, onco, gt)
+
+```
+
+#Count kgen genes that interact with tp53
+```{r kgen}
+
+#load nodes and edges from kgen interaction with tp53
+node <- read.table("kgen_eur_pav_tp53_cytoscape_v2_node_20180409.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE)
+edge <- read.table("kgen_eur_pav_tp53_cytoscape_v2_edge_20180409.csv", sep = ",", header = TRUE, stringsAsFactors = FALSE, quote="")
+
+#code for tp53
+tp53.name <- "H__sapiens__1_-Hs:717482"
+
+#code for cytoscape results
+results <- c(node[node$node.type == "result",]$name, tp53.name)
+
+#Add true false for first interactors
+edge$TP53int <- ifelse(edge$Int1 == tp53.name | edge$Int2 == tp53.name, TRUE, FALSE ) 
+
+#Create list of 1st interactors (including tp53 and result)
+interactors <- unique(c(edge[edge$TP53int == TRUE,]$Int1, edge[edge$TP53int == TRUE,]$Int2))
+
+#Add true false if interaction includes a first interactor
+edge$secints <- ifelse(edge$Int1 %in% interactors | edge$Int2 %in% interactors, TRUE, FALSE ) 
+
+#Create list of 1st interactors, 2nd interactors (including tp53 and result)
+secints <- unique(c(interactors, edge[edge$secint == TRUE,]$Int1, edge[edge$secint == TRUE,]$Int2))
+
+#remove results and tp53 from interactors
+kgen.1st <- interactors[!interactors %in% results]
+kgen.2nd <- secints[!secints %in% results]
+
+rm(node, edge, interactors, results, secints, tp53.name )
+```
+
+#Compare kgen with acc
+```{r compare}
+#Create dataframe of genes that interact
+counts <- data.frame(Term=c("1stdeg", "2nddeg"), 
+                    ACC_ints=c(nrow(tp53[tp53$node.type == "query" & tp53$degSepTP53 == 1,]), nrow(tp53[tp53$node.type == "query" & (tp53$degSepTP53 == 1 | tp53$degSepTP53 == 2),])), 
+                    kgen_ints=c(length(kgen.1st), length(kgen.2nd)))
+
+#Add counts of of genes that dont interact
+counts$ACC_noints <- 339 - counts$ACC_ints
+counts$kgen_noints <- 11360 - counts$kgen_ints
+
+```
+
+#Fishers exact
+```{r FE}
+#Calculate pvalues using two and one sided fishers
+counts$pval <- counts %>% apply(1, function(x){
+  fishtable <- matrix(as.numeric(c(x[2:5])), nrow = 2, byrow=TRUE)
+  fisher.test(fishtable)[[1]]
+})
+
+counts$pval_onesided <- counts %>% apply(1, function(x){
+  fishtable <- matrix(as.numeric(c(x[2:5])), nrow = 2, byrow=TRUE)
+  fisher.test(fishtable, alternative = "greater")[[1]]
+})
+
+
+counts
+
+kable(counts, col.names=c("Degree of interaction", "ACC gene with interaction", "Control gene with interaction","ACC gene without interaction", "Control gene without interaction", "P value", "One sided P value")) %>% column_spec(1, bold = T) %>%  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+

@@ -1,0 +1,201 @@
+---
+title: "Open in house set and filter genotypes"
+author: "EF"
+date: "08 Jan 2018"
+output: html_document
+---
+# start_section
+  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+graphics.off()
+
+# Set root working folder
+library(knitr)
+library(dplyr)
+library(stringr)
+
+opts_knit$set(root.dir = "/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IH_Jan18_GM/")
+setwd("/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IH_Jan18_GM/")
+
+```
+
+#Load data
+```{r load}
+vv <- read.table("Source_data/IH_Jan18_GM_vqsr_std_sma_ann_VV.txt", sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+
+gt <- read.table("Source_data/IH_Jan18_GM_vqsr_std_sma_ann_GT_add.txt", sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+
+dp <- read.table("Source_data/IH_Jan18_GM_vqsr_std_sma_ann_DP.txt", sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+
+gq <- read.table("Source_data/IH_Jan18_GM_vqsr_std_sma_ann_GQ.txt", sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+
+exac <- read.table("Source_data/IH_Jan18_GM_vqsr_std_sma_ann_exac.txt", sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+
+kgen <- read.table("Source_data/IH_Jan18_GM_vqsr_std_sma_ann_kgen.txt", sep = "\t", header = TRUE, row.names = 1, stringsAsFactors = FALSE)
+```
+
+#Convert to matrix
+```{r matrix}
+#Convert to matrix
+vv.mx <- as.matrix(vv)
+
+gt.mx <- as.matrix(gt)
+
+#number of variants in raw vcf
+nrow(vv.mx)
+
+rm(vv, gt)
+
+```
+
+
+#Filtering notes
+Filters consistent with filtering applied to WC1K. Call rate filter was lowered to < 0.6 as the dataset is much smaller than WC1K and easier to look through manually, plus there may be families with data not missing that is still useful, consider removing this filter completely.
+The filters are applied in the following order, filtering out:  
+gq < 20  
+dp > 500  
+call_rate < 0.5
+
+#Filter on gq
+```{r gq filter}
+
+#convert to matrix
+gq.mx <- as.matrix(gq)
+
+# num of genotypes to be removed
+sum(gq.mx < 20, na.rm=TRUE) #1920161
+
+# Fraction of genotypes to be removed
+sum(gq.mx < 20, na.rm=TRUE)/sum(!is.na(gq.mx)) # ~5%
+
+# Apply filter (to gt only !), can only run on matrices
+NA -> gt.mx[ gq.mx < 20 ]
+
+rm(gq, gq.mx)
+```
+
+#Filter on dp
+```{r dp filter}
+#convert to matrix
+dp.mx <- as.matrix(dp)
+
+# num of genotypes to be removed
+sum(dp.mx > 500, na.rm=TRUE) #3191
+
+# Fraction of genotypes to be removed
+sum(dp.mx > 500, na.rm=TRUE)/sum(!is.na(dp.mx)) # ~0.0000087%
+
+# Apply filter (to gt only !), can only run on matrices
+NA -> gt.mx[ dp.mx > 500 ]
+
+rm(dp, dp.mx)
+```
+
+#Filter on call rate
+```{r callrate filter}
+
+#Create callrates
+cr <- data.frame(RawVarID=row.names(gt.mx), callrate = NA)
+cr$callrate <- apply(gt.mx, 1, function(x) sum(!is.na(x))/ncol(gt.mx))  
+
+# num of genotypes to be removed
+sum(cr$callrate < 0.5) #656
+
+# Fraction of genotypes to be removed
+sum(cr$callrate < 0.5, na.rm=TRUE)/sum(nrow(cr)) # ~1%
+
+#Filter variants from cr
+
+cr.filt <- cr[cr$callrate >= 0.5,]
+
+# Remove variants from gt, vv, exac and kgen
+gt.filt <- gt.mx[row.names(gt.mx) %in% cr.filt$RawVarID,]
+
+vv.filt <- vv.mx[row.names(vv.mx) %in% cr.filt$RawVarID,]
+
+exac.filt <- exac[row.names(exac) %in% cr.filt$RawVarID,]
+
+kgen.filt <- kgen[row.names(kgen) %in% cr.filt$RawVarID,]
+
+rm(cr, cr.filt, gt.mx, vv.mx, exac, kgen)
+```
+
+#Check rownames
+```{r check rownames}
+
+sum(row.names(gt.filt) != row.names(vv.filt)) 
+
+sum(row.names(gt.filt) != row.names(exac.filt))
+
+sum(row.names(gt.filt) != row.names(kgen.filt))
+
+```
+
+#Check numbers of different sets
+```{r sets}
+
+#Total samples
+ncol(gt.filt)
+
+#Total IHCAP samples
+ncol(gt.filt[,grepl("IHCAP",colnames(gt.filt))])
+
+#Total Montreal samples
+ncol(gt.filt[,grepl("AFN",colnames(gt.filt))])
+
+#Total Prostate samples
+ncol(gt.filt[,grepl("PRS",colnames(gt.filt))])
+
+#Total Gastric samples
+ncol(gt.filt[,grepl("ST",colnames(gt.filt)) | grepl("PQ",colnames(gt.filt))]) #repeated: pq47_304 
+
+#Remove repeated gastric sample
+gt.filt <- select(as.data.frame(gt.filt), -PQ47_304.GT)
+
+sum(row.names(gt.filt) != row.names(vv.filt)) 
+
+row.names(gt.filt) <- row.names(vv.filt)
+
+```
+
+#Create counts and ANs for each set
+```{r counts}
+
+vv.filt <- as.data.frame(vv.filt)
+
+#Create AC column
+vv.filt$IHCAP_AC <- rowSums(gt.filt[,grepl("IHCAP",colnames(gt.filt))], na.rm=TRUE)
+vv.filt$AFN_AC <- rowSums(gt.filt[,grepl("AFN",colnames(gt.filt))], na.rm = TRUE)
+vv.filt$PRS_AC <- rowSums(gt.filt[,grepl("PRS",colnames(gt.filt))], na.rm = TRUE)
+vv.filt$GST_AC <- rowSums(gt.filt[,grepl("ST",colnames(gt.filt)) | grepl("PQ",colnames(gt.filt))], na.rm = TRUE)
+
+#Create AN column
+vv.filt$IHCAP_AN <- apply(gt.filt[,grepl("IHCAP",colnames(gt.filt))], MARGIN=1, FUN= function(x) length(x[!is.na(x)])*2)
+vv.filt$AFN_AN <- apply(gt.filt[,grepl("AFN",colnames(gt.filt))], MARGIN=1, FUN= function(x) length(x[!is.na(x)])*2)
+vv.filt$PRS_AN <- apply(gt.filt[,grepl("PRS",colnames(gt.filt))], MARGIN=1, FUN= function(x) length(x[!is.na(x)])*2)
+vv.filt$GST_AN <- apply(gt.filt[,grepl("ST",colnames(gt.filt)) | grepl("PQ",colnames(gt.filt))], MARGIN=1, FUN= function(x) length(x[!is.na(x)])*2)
+
+#Create AF columns
+vv.filt$IHCAP_AF <- vv.filt$IHCAP_AC/vv.filt$IHCAP_AN
+vv.filt$AFN_AF <- vv.filt$AFN_AC/vv.filt$AFN_AN
+vv.filt$PRS_AF <- vv.filt$PRS_AC/vv.filt$PRS_AN
+vv.filt$GST_AF <- vv.filt$GST_AC/vv.filt$GST_AN
+
+#Image to use in all later analysis
+save.image("R_data/s01_IH_Jan18_GM_20180108.Rdata")
+
+vv.filt$IH_AF <- vv.filt$AF
+vv.filt$IH_AC <- vv.filt$AC
+vv.filt$IH_AN <- vv.filt$AN
+
+#Save in house data to add to pipeline
+write.csv(vv.filt, "IH_Jan18_GM_20180108.csv")
+
+```
+

@@ -1,0 +1,167 @@
+---
+title: "Combine ACC oncos with TCGA oncos"
+author: "EF"
+date: "20 Feb 2018"
+output: html_document
+---
+# start_section
+  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+graphics.off()
+
+# Set root working folder
+library(knitr)
+library(dplyr)
+library(stringr)
+library(multigrep)
+
+opts_knit$set(root.dir = "/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IHCAP_sets/IHCAP_ACC_Jan18/")
+setwd("/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IHCAP_sets/IHCAP_ACC_Jan18/")
+
+```
+
+#Load TCGA image
+```{r load tcga}
+
+load("/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/TCGA_ACC/R_data/s03_TCGA_ACC_20180220.Rdata")
+
+tcga_gt <- gt
+tcga_vv <- aggr
+
+#Check dimensions
+dim(tcga_gt)
+dim(tcga_vv)
+
+sum(row.names(tcga_gt) != row.names(tcga_vv)) 
+
+rm(aggr, gt)
+```
+
+#Load ACC image
+```{r load acc}
+
+load("R_data/s03_ihcap_acc_Jan18_oncocytic_v2_20180116.Rdata")
+
+acc_gt <- gt.onco
+acc_vv <- aggr_acc
+
+#Check dimensions
+dim(acc_gt)
+dim(acc_vv)
+
+sum(row.names(acc_gt) != row.names(acc_vv)) 
+
+rm(aggr, aggr_acc, gt, gt.onco, merged, vv)
+```
+
+
+#Create onco count tcga
+```{r onco tcga}
+#Oncocytic samples in tcga
+tcga_onco <- c("OR.A5JD", "OR.A5JH", "OR.A5K3", "OR.A5LK")
+
+#Create oncocytic allele count
+tcga_vv$onco_tcga_AC <- rowSums(tcga_gt[,multigrep(tcga_onco, colnames(tcga_gt))], na.rm = TRUE)
+
+#Create oncocytic allele number
+tcga_vv$onco_tcga_AN <- apply(tcga_gt[,multigrep(tcga_onco, colnames(tcga_gt))], 1, function(x) sum(!is.na(x))*2)
+
+#Select rows that have var in oncos
+tcga.onco_vv <- tcga_vv[tcga_vv$onco_tcga_AC > 0,]
+#create col of tcga rawvarids
+tcga.onco_vv$tcga.id <- row.names(tcga.onco_vv)
+
+#create gt of vars in oncos
+tcga.onco_gt <- tcga_gt[row.names(tcga_gt) %in% row.names(tcga.onco_vv),multigrep(tcga_onco, colnames(tcga_gt))]
+
+rm(tcga_vv, tcga_gt)
+```
+
+#Onco acc set
+```{r onco acc}
+#remove in house afs for easier merging
+acc.onco_vv <- acc_vv[acc_vv$onco_AC > 0, -c(35:46)]
+
+#create col of rawvarids in accs
+acc.onco_vv$acc.id <- row.names(acc.onco_vv)
+
+#create gt of vars in oncos
+acc.onco_gt <- acc_gt[row.names(acc_gt) %in% row.names(acc.onco_vv), colnames(acc_gt) %in% onco]
+
+rm(acc_vv, acc_gt)
+```
+
+
+#Merge sets
+```{r merge}
+#Create set with just IH info to add after
+vv.onco <- merge(acc.onco_vv, tcga.onco_vv, all = TRUE, on=c("CHR", "POS", "REF", "ALT"))
+
+#Summarise values between two datasets
+summa <- vv.onco %>% group_by(CHROM, POS, REF, ALT) %>% mutate(
+  QUAL=mean(as.numeric(as.character(QUAL))),
+  DP=mean(as.numeric(as.character(DP))),
+  AS_VQSLOD=mean(as.numeric(as.character(AS_VQSLOD))),
+  AC=sum(as.numeric(as.character(AC)), na.rm=TRUE),
+  AN=sum(as.numeric(as.character(AN)), na.rm=TRUE),
+  AF=NA,
+  VperG=NA,
+  onco_AC=sum(as.numeric(as.character(onco_AC)), na.rm=TRUE),
+  onco_AN=sum(as.numeric(as.character(onco_AN)), na.rm=TRUE),
+  onco_tcga_AC=sum(as.numeric(as.character(onco_tcga_AC)), na.rm=TRUE),
+  onco_tcga_AN=sum(as.numeric(as.character(onco_tcga_AN)), na.rm=TRUE),
+  acc.id=ifelse(sum(!is.na(acc.id) > 0), acc.id[!is.na(acc.id)], NA),
+  tcga.id=ifelse(sum(!is.na(tcga.id) > 0), tcga.id[!is.na(tcga.id)], NA),
+  IH_AC=sum(as.numeric(as.character(IH_AC)), na.rm=TRUE),
+  IH_AN=sum(as.numeric(as.character(IH_AN)), na.rm=TRUE)) %>% as.data.frame()
+
+#Remove columns that couldn't be summarised or are unnecassary
+vv.onco.short <- summa %>% subset(select=-c(rows, SplitVarID, IH_AF, ACC_AC, ACC_AN)) %>% unique()
+
+#Create count of variants per gene
+aggr <- vv.onco.short %>% group_by(SYMBOL) %>% mutate(VperG = length(SYMBOL)) %>% as.data.frame()
+
+rm(acc.onco_vv, tcga.onco_vv, vv.onco, summa, vv.onco.short)
+```
+
+
+#Merge on gt files for both sets
+```{r gtcombine}
+#Add id column to accs to merge on
+acc.onco_gt$acc.id <- row.names(acc.onco_gt)
+#merge acc gt file
+aggr.acc <- merge(aggr, acc.onco_gt, on=acc.id, all=TRUE)
+
+#Add id column to tcga to merge on
+tcga.onco_gt$tcga.id <- row.names(tcga.onco_gt)
+
+#merge tcga gt file
+aggr.tcga <- merge(aggr.acc, tcga.onco_gt, on=tcga.id, all=TRUE)
+
+#Replace NA with 0
+aggr.tcga[,48:56][is.na(aggr.tcga[,48:56])] <- 0
+
+rm(aggr, aggr.acc, acc.onco_gt, tcga.onco_gt, acc)
+```
+
+#Write image
+```{r write}
+
+#Image to use in all later analysis
+save.image("R_data/s03_ACC_withTCGA_onco_20180222.Rdata")
+
+```
+
+
+#Write csv's for all data
+```{r write csv}
+write.csv(aggr.tcga, "ACC_withTCGA_onco_filt_20180222.csv")
+
+```
+

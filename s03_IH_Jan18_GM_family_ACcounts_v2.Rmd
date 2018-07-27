@@ -1,0 +1,85 @@
+---
+title: "Look for genes with variants in multiple families"
+author: "EF"
+date: "01 Feb 2018"
+output: html_document
+---
+# start_section
+  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+graphics.off()
+
+# Set root working folder
+library(knitr)
+library(dplyr)
+library(stringr)
+
+opts_knit$set(root.dir = "/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IH_Jan18_GM/")
+setwd("/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IH_Jan18_GM/")
+
+```
+
+#Load image from s01
+```{r load image}
+
+load("R_data/s02_IH_Jan18_GM_20180108.Rdata")
+
+#Check dimensions
+dim(gt)
+dim(vv)
+
+sum(row.names(gt) != row.names(vv)) 
+
+```
+
+#Rename samples for consistancy
+```{r rename}
+colnames(gt)<- str_replace_all(colnames(gt), pattern = ".GT", "")
+
+```
+
+#Var counts
+```{r var counts}
+#Create count of variants per gene
+aggr <- vv %>% group_by(SYMBOL) %>% mutate(VperG = length(SYMBOL)) %>% as.data.frame()
+
+row.names(aggr) <- row.names(vv)
+
+sum(row.names(gt) != row.names(aggr)) 
+
+
+rm(vv)
+
+```
+
+#Select genes with one variant in each family
+```{r select variants in affected}
+
+#Image to use in all later analysis
+save.image("R_data/s03_IH_Jan18_GM_20180201.Rdata")
+
+```
+
+#Create merged set of all data
+```{r all set}
+
+sum(row.names(gt) != row.names(aggr))
+
+all <- cbind(aggr, gt)
+
+```
+
+
+#Write csv's for all data
+```{r write csv}
+write.csv(all, "IH_Jan18_filt_20180201.csv")
+
+
+```
+

@@ -1,0 +1,105 @@
+---
+title: "Look for genes with variants in multiple families"
+author: "EF"
+date: "16 Jan 2018"
+output: html_document
+---
+# start_section
+  
+```{r start_section}
+
+# Time stamp
+Sys.time()
+
+# Clean up
+rm(list=ls())
+graphics.off()
+
+# Set root working folder
+library(knitr)
+library(dplyr)
+library(stringr)
+
+opts_knit$set(root.dir = "/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IHCAP_sets/IHCAP_ACC_Jan18")
+setwd("/rds/project/erf33/rds-erf33-medgen/users/eleanor/2015-16/IHCAP/IHCAP_sets/IHCAP_ACC_Jan18")
+
+```
+
+#Load image from s01
+```{r load image}
+
+load("R_data/s02_IH_Jan18_GM_20180108.Rdata")
+
+#Check dimensions
+dim(gt)
+dim(vv)
+
+sum(row.names(gt) != row.names(vv)) 
+
+```
+
+#Rename samples for consistancy
+```{r rename}
+colnames(gt)<- str_replace_all(colnames(gt), pattern = ".GT", "")
+
+```
+
+#Family counts
+```{r cc counts}
+
+#Group oncocytic and make AC
+acc <- c("IHCAP_22_01", "IHCAP_024_1", "AGM17_11508", "ONCO_ACC_01", "AGM17_13824", "IHCAP_03_01", "IHCAP_060_1", "IHCAP_19_01" )
+
+onco <- c("IHCAP_22_01", "IHCAP_024_1", "AGM17_11508", "ONCO_ACC_01", "AGM17_13824" )
+
+vv$onco_AC <- rowSums(gt[,colnames(gt) %in% onco], na.rm = TRUE)
+
+vv$onco_AN <- apply(gt[,colnames(gt) %in% onco], 1, function(x) sum(!is.na(x))*2)
+
+vv$ACC_AC <- rowSums(gt[,colnames(gt) %in% acc], na.rm = TRUE)
+
+vv$ACC_AN <- apply(gt[,colnames(gt) %in% acc], 1, function(x) sum(!is.na(x))*2)
+```
+
+#ACC variants selected from full in house dataset
+
+```{r select variants in affected}
+#ACC variants selected from full in house dataset
+
+vv$rows <- row.names(vv)
+
+aggr <- vv %>% group_by(SYMBOL) %>% mutate(VperG = sum(as.numeric(AC)))
+
+aggr_acc <- as.data.frame(aggr[aggr$ACC_AC > 0,])
+
+#Number of variants
+nrow(aggr_acc)
+
+#Number of genes
+length(unique(aggr_acc$SYMBOL))
+
+#number of oncocytic variants
+sum(aggr_acc$onco_AC > 0)
+
+#Number of oncocytic genes
+length(unique(aggr_acc[aggr_acc$onco_AC > 0,]$SYMBOL))
+
+
+row.names(aggr_acc) <- aggr_acc$rows
+
+gt.onco <- gt[row.names(gt) %in% row.names(aggr_acc), colnames(gt) %in% acc]
+
+sum(row.names(gt.onco) != row.names(aggr_acc)) 
+
+merged <- cbind(aggr_acc, gt.onco)
+
+#Image to use in all later analysis
+save.image("R_data/s03_ihcap_acc_Jan18_oncocytic_v2_20180116.Rdata")
+```
+
+
+```{r write csv}
+write.csv(merged, "ihcap_acc_Jan18_filt_20180116.csv")
+
+```
+
